@@ -354,14 +354,19 @@ class Bitrot(object):
 
         sys.stdout.write(size_fmt)
         sys.stdout.flush()
+        
+        file = open("bitrot_log.txt", "a")
+        file.write(size_fmt + "\n")
+        file.close()
+		
         self._last_reported_size = size_fmt
 
     def report_done(
         self, total_size, all_count, error_count, new_paths, updated_paths,
         renamed_paths, missing_paths):
         """Print a report on what happened.  All paths should be Unicode here."""
-        print('\rFinished. {:.2f} MiB of data read. {} errors found.'
-            ''.format(total_size/1024/1024, error_count))
+        print('\rFinished. {:.2f} TB of data read. {} errors found.'
+            ''.format(total_size/1024/1024/1024/1024, error_count))
         if self.verbosity == 1:
             print(
                 '{} entries in the database, {} new, {} updated, '
@@ -419,20 +424,39 @@ class Bitrot(object):
             if old_path not in paths_uni:
                 # File of the same hash used to exist but no longer does.
                 # Let's treat `new_path` as a renamed version of that `old_path`.
-                cur.execute(
-                    'UPDATE bitrot SET mtime=?, path=?, timestamp=? WHERE path=?',
-                    (new_mtime, new_path, ts(), old_path),
-                )
+                try:
+                    cur.execute(
+                        'UPDATE bitrot SET mtime=?, path=?, timestamp=? WHERE path=?',
+                        (new_mtime, new_path, ts(), old_path),
+                    )
+                except sqlite3.IntegrityError as e:
+                    print(
+                        'Error occurred: ', e
+                        , 'new_path: ', new_path
+                    )
+                    file = open("bitrot_errors.txt", "a")
+                    file.write(new_path + "\n")
+                    file.close()
                 return old_path
 
         else:
             # Either we haven't found `new_sha1` at all in the database, or all
             # currently stored paths for this hash still point to existing files.
             # Let's insert a new entry for what appears to be a new file.
-            cur.execute(
-                'INSERT INTO bitrot VALUES (?, ?, ?, ?)',
-                (new_path, new_mtime, new_sha1, ts()),
-            )
+            try:
+                cur.execute(
+                    'INSERT INTO bitrot VALUES (?, ?, ?, ?)',
+                    (new_path, new_mtime, new_sha1, ts()),
+                )
+            except sqlite3.IntegrityError as e:
+                print(
+                	'Error occurred: ', e
+                    , 'new_path: ', new_path
+                )
+                file = open("bitrot_errors.txt", "a")
+                file.write(new_path + "\n")
+                file.close()
+    		
             return new_path
 
 def get_path(directory=b'.', ext=b'db'):
@@ -465,6 +489,15 @@ def check_sha512_integrity(verbosity=1):
 
     if verbosity:
         print('Checking bitrot.db integrity... ', end='')
+        
+        file = open("bitrot_log.txt", "w")
+        file.write('Checking bitrot.db integrity... \n')
+        file.close()
+        
+        file = open("bitrot_errors.txt", "w")
+        file.write('')
+        file.close()
+        
         sys.stdout.flush()
     with open(sha512_path, 'rb') as f:
         old_sha512 = f.read().strip()
@@ -511,6 +544,11 @@ def update_sha512_integrity(verbosity=1):
     if new_sha512 != old_sha512:
         if verbosity:
             print('Updating bitrot.sha512... ', end='')
+            
+            file = open("bitrot_log.txt", "a")
+            file.write('Updating bitrot.sha512... \n')
+            file.close()
+        
             sys.stdout.flush()
         with open(sha512_path, 'wb') as f:
             f.write(new_sha512)
